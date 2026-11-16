@@ -1,21 +1,35 @@
-# AI Company v0.1
+# AI Company v0.2
 
-5人の役割別AIエージェントがオンライン事業の候補を検討し、オーナーに提案する最小構成です。**自動で契約・購入・投稿・送信・販売はしません。** ライブWeb検索、共通DB、定期実行、管理画面は未実装です。
+Railway上で5人のAIエージェントによる経営会議を**1回**実行し、Supabaseに議事録・推奨案・実行履歴を保存する最小版です。Web検索や外部サービスの操作はしません。CPO/CMO/CFOは**順次**評価します。オーナー承認機能、Web画面、定期実行、費用の実額計算は未実装です。
 
-## ローカルで実行
+## 必要なRailway Variables
 
-Python 3.11以降を使用します。
+- `OPENAI_API_KEY`（OpenAI API秘密鍵）
+- `OPENAI_MODEL`（任意、初期値 `gpt-4.1-mini`）
+- `SUPABASE_URL`（Project URL）
+- `SUPABASE_SERVICE_ROLE_KEY`（サーバー専用Secret keyまたはLegacy service_role）
+- `MAX_OUTPUT_TOKENS`（任意、初期値1300）
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-export OPENAI_API_KEY='ご自身のAPIキー'
-python main.py
-```
+鍵はGitHubに保存しないでください。
 
-実行後、`outputs/meeting_*.md` に経営会議の議事録が保存されます。`outputs/` はGit管理から除外しています。API利用には別途課金が発生します。実行前にOpenAI APIの利用上限・通知を設定してください。APIキーはGitHubに登録しないでください。
+## 前提SQL
 
-## Railway
+Supabaseに `agents`, `meetings`, `business_ideas`, `tasks`, `approvals`, `execution_logs` の6テーブルが存在し、`agents` に `AG-01`〜`AG-05` が登録されていること。以前の初期SQLに対応しています。
 
-このv0.1は**一度実行して終了するバッチ処理**です。RailwayではGitHubリポジトリを接続し、環境変数 `OPENAI_API_KEY` を登録して、Start Commandを `python main.py` に設定できます。ただしRailwayのコンテナ内の`outputs/`は永続保存を保証しません。まずローカル実行で動作を確認し、次の版でSupabaseへの永続保存と定期実行を追加してください。常時稼働するWebアプリではありません。
+## GitHubへの反映
+
+既存のRailway Root Directoryが `/ai-company` の場合、GitHubの **`ai-company/` フォルダ内**にこのZIPの `main.py`, `requirements.txt`, `.gitignore`, `README.md` を配置してください。GitHubのルートに置くとRailwayは読み込みません。既存の `main.py` は上書きします。既存のプログラムの内容は未確認のため、この版は既存v0.1への差分ではなく**独立した置換版**です。
+
+RailwayのStart Commandは `python main.py`。設定変更後に再デプロイ。これはワンショット実行なので、正常終了しても常時稼働のWebサービスにはなりません。RailwayのUI上の状態表示よりDeploy Logsの `Supabase meetings.id:` とSupabase Table Editorの実データを確認してください。自動再起動が有効なサービスでは繰り返し実行される可能性があるため、意図しない再起動や再デプロイに注意してください。
+
+## 確認
+
+Supabase > Table Editor > `meetings` に1行、`business_ideas` に1行、`execution_logs` に5行が追加されます。エラー時には途中まで書き込まれる場合があります。実行のたびにAPI費用が発生します。
+
+## 制約
+
+- AIの市場評価は**未検証の仮説**です。Web検索機能はありません。
+- `business_ideas.name` は暫定名で、詳細な事業案は `description` と議事録にあります。
+- `execution_logs.cost_usd` は未記録です（実費を推定しないため）。
+- データベース書き込みはトランザクションではありません。途中失敗時は一部のみ保存されます。
+- Secret keyはサーバーからのみ使用。公開フロントエンドに渡さないでください。

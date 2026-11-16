@@ -157,7 +157,6 @@ else:
         if submitted:
             if not confirm:
                 st.error('確認チェックを入れてください。')
-                st.stop()
             if not proposal.strip():
                 st.error('提案名を入力してください。')
             else:

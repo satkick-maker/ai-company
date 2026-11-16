@@ -1,35 +1,23 @@
-# AI Company v0.2
+# AI Company v0.3 — Owner-approved market research
 
-Railway上で5人のAIエージェントによる経営会議を**1回**実行し、Supabaseに議事録・推奨案・実行履歴を保存する最小版です。Web検索や外部サービスの操作はしません。CPO/CMO/CFOは**順次**評価します。オーナー承認機能、Web画面、定期実行、費用の実額計算は未実装です。
+## Scope
+- Only research into niche newsletters, competition, pricing, acquisition and profitability.
+- No account creation, posting, email delivery, purchases or contracts.
+- CSO, CMO, CFO use OpenAI Responses web_search_preview; COO consolidates. CPO is not used in this research-only phase.
+- Saves report to Supabase `meetings`, a `research_only` proposal to `business_ideas`, and agent logs.
 
-## 必要なRailway Variables
+## Before deploying
+1. In Supabase SQL Editor run `setup_v03.sql` **once**. This prevents repeated paid calls for the same `RESEARCH_RUN_ID` when Railway restarts.
+2. Upload `main.py`, `requirements.txt`, and `setup_v03.sql` into the GitHub directory configured as Railway Root Directory (`/ai-company` in the previous setup). Never upload `.env` or actual secrets.
+3. Railway Variables: existing `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_MODEL` remain. Add `RUN_RESEARCH=0` and `RESEARCH_RUN_ID=research-001`.
+4. Railway Start Command: `python main.py`. Deployment with `RUN_RESEARCH=0` exits without calling OpenAI.
+5. To run **once**, set `RUN_RESEARCH=1` and deploy. Check Deploy Logs for `Supabase meetings.id:`. Then set `RUN_RESEARCH=0` again.
+6. For another explicitly approved run, use a **new** `RESEARCH_RUN_ID`, but only after reviewing cost and approval.
 
-- `OPENAI_API_KEY`（OpenAI API秘密鍵）
-- `OPENAI_MODEL`（任意、初期値 `gpt-4.1-mini`）
-- `SUPABASE_URL`（Project URL）
-- `SUPABASE_SERVICE_ROLE_KEY`（サーバー専用Secret keyまたはLegacy service_role）
-- `MAX_OUTPUT_TOKENS`（任意、初期値1300）
-
-鍵はGitHubに保存しないでください。
-
-## 前提SQL
-
-Supabaseに `agents`, `meetings`, `business_ideas`, `tasks`, `approvals`, `execution_logs` の6テーブルが存在し、`agents` に `AG-01`〜`AG-05` が登録されていること。以前の初期SQLに対応しています。
-
-## GitHubへの反映
-
-既存のRailway Root Directoryが `/ai-company` の場合、GitHubの **`ai-company/` フォルダ内**にこのZIPの `main.py`, `requirements.txt`, `.gitignore`, `README.md` を配置してください。GitHubのルートに置くとRailwayは読み込みません。既存の `main.py` は上書きします。既存のプログラムの内容は未確認のため、この版は既存v0.1への差分ではなく**独立した置換版**です。
-
-RailwayのStart Commandは `python main.py`。設定変更後に再デプロイ。これはワンショット実行なので、正常終了しても常時稼働のWebサービスにはなりません。RailwayのUI上の状態表示よりDeploy Logsの `Supabase meetings.id:` とSupabase Table Editorの実データを確認してください。自動再起動が有効なサービスでは繰り返し実行される可能性があるため、意図しない再起動や再デプロイに注意してください。
-
-## 確認
-
-Supabase > Table Editor > `meetings` に1行、`business_ideas` に1行、`execution_logs` に5行が追加されます。エラー時には途中まで書き込まれる場合があります。実行のたびにAPI費用が発生します。
-
-## 制約
-
-- AIの市場評価は**未検証の仮説**です。Web検索機能はありません。
-- `business_ideas.name` は暫定名で、詳細な事業案は `description` と議事録にあります。
-- `execution_logs.cost_usd` は未記録です（実費を推定しないため）。
-- データベース書き込みはトランザクションではありません。途中失敗時は一部のみ保存されます。
-- Secret keyはサーバーからのみ使用。公開フロントエンドに渡さないでください。
+## Important safeguards
+- Run reservation is stored in `approvals` before chargeable calls. The `approvals` table was created by v0.2. A duplicate run ID causes an error *before* OpenAI charges. A failed run cannot be retried with the same ID; choose a new ID only after diagnosing the failure and explicitly authorizing the extra cost.
+- A Railway deployment may display `CRASHED` if its one-shot command exits. This app is a batch job, not a persistent web server. Railway service configuration should disable automatic restarts (`Restart Policy: Never`) if supported.
+- `RUN_RESEARCH=1` with a new ID can incur API and web-search fees. The script does not enforce a currency budget cap; check OpenAI billing/limits separately. The token log excludes web search fees.
+- The script intentionally does not implement external publishing or owner-approval UI. `approvals` holds a run authorization record; it is not an interactive authorization mechanism. The owner must explicitly change Railway Variables.
+- Web search availability and exact model/tool compatibility depend on the OpenAI API account/model; if unsupported, stop and inspect logs. Never silently replace web research with invented claims.
+- RLS remains enabled. Keep Supabase secret keys server-side only.

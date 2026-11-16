@@ -153,8 +153,11 @@ else:
                 format_func=lambda x: {'needs_research': '再調査', 'approved': '承認（記録のみ）', 'rejected': '却下'}[x])
             comment = st.text_area('判断理由・追加指示（任意）', height=100)
             confirm = st.checkbox('これは判断の記録のみで、外部への実行を許可する操作ではないことを確認しました')
-            submitted = st.form_submit_button('判断を保存', disabled=not confirm)
+            submitted = st.form_submit_button('判断を保存')
         if submitted:
+            if not confirm:
+                st.error('確認チェックを入れてください。')
+                st.stop()
             if not proposal.strip():
                 st.error('提案名を入力してください。')
             else:

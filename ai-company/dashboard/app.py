@@ -64,10 +64,28 @@ def create_decision(title, description, decision, comment):
     return response.json()
 
 
+
+def update_request_decision(request_id, decision, comment):
+    base = os.environ.get('SUPABASE_URL', '').strip().rstrip('/')
+    key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY', '').strip()
+    if not base.startswith('https://') or not base.endswith('.supabase.co') or not key:
+        raise RuntimeError('Supabase接続設定を確認してください。')
+    headers = {'apikey': key, 'Authorization': f'Bearer {key}', 'Prefer': 'return=representation'}
+    response = requests.patch(
+        f'{base}/rest/v1/approval_requests',
+        params={'id': f'eq.{request_id}', 'status': 'eq.pending'},
+        json={'status': decision, 'owner_comment': comment or None,
+              'decided_at': datetime.now().astimezone().isoformat()},
+        headers=headers, timeout=15)
+    response.raise_for_status()
+    if len(response.json()) != 1:
+        raise RuntimeError('すでに判断済み、または申請が見つかりません。画面を更新してください。')
+
+
 require_login()
 with st.sidebar:
     st.title('🏢 AI Company')
-    page = st.radio('メニュー', ['概要', '経営会議・市場調査', '財務シミュレーション', '調査品質チェック', 'オーナー判断'])
+    page = st.radio('メニュー', ['概要', '経営会議・市場調査', '財務シミュレーション', '調査品質チェック', 'オーナー判断', 'AI承認申請'])
     if st.button('ログアウト'):
         st.session_state.authenticated = False
         st.rerun()
@@ -130,7 +148,7 @@ elif page == '財務シミュレーション':
     st.dataframe(rows, use_container_width=True, hide_index=True)
     st.code('必要会員数 = ceil((目標月利益 + 月額固定費) / (会費 × (1 − 決済手数料率)))')
 
-else:
+elif page == 'オーナー判断':
     st.info('ここでの承認は判断の記録のみです。AIへの指示、Web公開、購入、契約、外部送信は実行されません。')
     try:
         meetings = fetch('meetings', 'id,title,content,status,created_at', 30)
@@ -157,7 +175,7 @@ else:
         if submitted:
             if not confirm:
                 st.error('確認チェックを入れてください。')
-            if not proposal.strip():
+            elif not proposal.strip():
                 st.error('提案名を入力してください。')
             else:
                 try:
@@ -177,3 +195,43 @@ else:
             'コメント': d.get('owner_comment') or '',
             '関連情報': d.get('proposal_description') or ''
         } for d in decisions], use_container_width=True, hide_index=True)
+
+
+if page == 'AI承認申請':
+    st.info('AI社員が作成した申請を確認し、判断を記録します。承認しても業務は実行されません。')
+    try:
+        requests_data = fetch('approval_requests', 'id,source_meeting_id,request_type,requested_by,title,description,estimated_cost_yen,external_action,status,owner_comment,created_at,decided_at', 100)
+    except Exception as exc:
+        st.error(f'承認申請の取得に失敗しました。setup_v05.sqlの実行を確認してください: {exc}')
+        st.stop()
+    pending = [r for r in requests_data if r.get('status') == 'pending']
+    st.metric('承認待ち', len(pending))
+    if not pending:
+        st.caption('承認待ちの申請はありません。申請生成プログラムは明示的に実行するまで動きません。')
+    for r in pending:
+        with st.expander(f"{r['title']} | {r.get('requested_by','COO')}"):
+            st.write(r.get('description') or '')
+            st.write(f"想定追加費用: {r.get('estimated_cost_yen',0)}円（API従量料金は別途）")
+            st.write(f"外部操作: {'あり（実行不可）' if r.get('external_action') else 'なし'}")
+            with st.form('request_' + r['id']):
+                decision = st.radio('判断', ['needs_research','approved','rejected'],
+                    format_func=lambda v: {'needs_research':'再調査','approved':'承認（記録のみ）','rejected':'却下'}[v], key='choice_'+r['id'])
+                comment = st.text_area('判断理由', key='comment_'+r['id'])
+                confirm = st.checkbox('判断の記録のみであり、自動実行されないことを確認しました', key='confirm_'+r['id'])
+                submit = st.form_submit_button('判断を保存')
+            if submit:
+                if not confirm:
+                    st.error('確認チェックを入れてください。')
+                else:
+                    try:
+                        update_request_decision(r['id'], decision, comment)
+                        st.success('判断を保存しました。外部処理は実行していません。')
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f'保存失敗: {exc}')
+    st.subheader('申請履歴')
+    if requests_data:
+        st.dataframe([{'申請日時':r.get('created_at'), '提案':r.get('title'),
+            '申請者':r.get('requested_by'), '状態':r.get('status'),
+            '判断理由':r.get('owner_comment') or ''} for r in requests_data],
+            hide_index=True, use_container_width=True)

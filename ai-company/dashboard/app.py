@@ -85,11 +85,11 @@ def update_request_decision(request_id, decision, comment):
 require_login()
 with st.sidebar:
     st.title('🏢 AI Company')
-    page = st.radio('メニュー', ['概要', '経営会議・市場調査', '財務シミュレーション', '調査品質チェック', 'オーナー判断', 'AI承認申請'])
+    page = st.radio('メニュー', ['概要', '経営会議・市場調査', '財務シミュレーション', '調査品質チェック', 'オーナー判断', 'AI承認申請', '経営会議を開催'])
     if st.button('ログアウト'):
         st.session_state.authenticated = False
         st.rerun()
-    st.caption('v0.4 Phase 2 / 判断記録のみ・自動実行なし')
+    st.caption('v0.6 / 会議開催は明示操作のみ・外部実行なし')
 
 st.title(page)
 if page in ('概要', '経営会議・市場調査', '調査品質チェック'):
@@ -235,3 +235,91 @@ if page == 'AI承認申請':
             '申請者':r.get('requested_by'), '状態':r.get('status'),
             '判断理由':r.get('owner_comment') or ''} for r in requests_data],
             hide_index=True, use_container_width=True)
+
+
+if page == '経営会議を開催':
+    st.info('この画面からAI社員5名の会議を1回開催します。API従量料金が発生します。Web検索、投稿、購入、契約、外部送信は行いません。')
+    st.warning('処理中はブラウザを閉じたり再読み込みしたりしないでください。会議は数分かかる場合があります。')
+    try:
+        recent_meetings = fetch('meetings', 'id,title,content,status,created_at', 10)
+        prior_requests = fetch('approval_requests', 'id,title,description,status,owner_comment,created_at', 20)
+    except Exception as exc:
+        st.error(f'履歴取得に失敗しました: {exc}')
+        st.stop()
+    with st.form('new_meeting_form'):
+        agenda = st.text_area('議題', value='ニッチ特化型メルマガ事業の14日間無料登録獲得テストについて、オーナーの再調査指示を踏まえ、外部公開前の実施計画を具体化する。', height=110)
+        use_feedback = st.checkbox('直近のオーナー判断・追加指示を会議に含める', value=True)
+        consent = st.checkbox('API従量料金が発生すること、会議は内部検討のみで外部操作しないことを確認しました')
+        start = st.form_submit_button('経営会議を1回開催', type='primary')
+    if start:
+        if not consent:
+            st.error('費用と実行範囲の確認にチェックしてください。')
+        elif not agenda.strip() or len(agenda) > 1500:
+            st.error('議題は1〜1500文字で入力してください。')
+        elif not os.getenv('OPENAI_API_KEY'):
+            st.error('DashboardサービスのVariablesにOPENAI_API_KEYを設定してください。')
+        else:
+            import json
+            from openai import OpenAI
+            api_base = os.environ['SUPABASE_URL'].strip().rstrip('/')
+            api_key = os.environ['SUPABASE_SERVICE_ROLE_KEY'].strip()
+            headers = {'apikey': api_key, 'Authorization': f'Bearer {api_key}', 'Prefer': 'return=representation'}
+            run_id = str(uuid.uuid4())
+            payload = {'id': run_id, 'agenda': agenda.strip(), 'status': 'running'}
+            try:
+                claim = requests.post(f'{api_base}/rest/v1/meeting_runs', headers=headers, json=payload, timeout=20)
+                claim.raise_for_status()
+            except Exception as exc:
+                st.error(f'会議開始記録を保存できませんでした。APIは呼び出していません: {exc}')
+                st.stop()
+            try:
+                feedback = ''
+                if use_feedback:
+                    relevant = [r for r in prior_requests if r.get('owner_comment') and r.get('status') != 'pending'][:5]
+                    feedback = '\n'.join(f"申請: {r['title']} / 判断: {r['status']} / オーナー指示: {r['owner_comment']}" for r in relevant)
+                client = OpenAI(api_key=os.environ['OPENAI_API_KEY'], timeout=90, max_retries=0)
+                model = os.getenv('MEETING_MODEL', 'gpt-4.1-mini')
+                policy = ('あなたはAI Companyの社内AI社員。日本語で簡潔かつ具体的に答える。'
+                          '初期予算10万円、6か月後に月利益10万円を目標とするオンライン事業。'
+                          'この会議は内部検討のみ。公開、SNS投稿、送信、購入、契約、広告出稿、ユーザー募集、実際の調査実行は禁止。'
+                          'Web検索は使えない。最新情報・出典・数値は確認できなければ未確認と明示する。'
+                          '仮説と事実を分け、費用上限と承認が必要な操作を明記する。')
+                roles = [
+                    ('CSO','市場・競合・ターゲット・検証仮説'),
+                    ('CPO','提供価値・商品仕様・登録体験'),
+                    ('CMO','集客計画・測定方法・外部公開の承認境界'),
+                    ('CFO','予算・採算・KPI・撤退条件'),
+                    ('COO','全員の意見を統合し、矛盾点、次の社内作業、オーナー承認が必要な事項を整理')]
+                outputs = {}
+                with st.spinner('AI社員5名が順番に検討しています。完了までお待ちください…'):
+                    for role, responsibility in roles:
+                        context = '\n'.join(f'{k}: {v[:2400]}' for k,v in outputs.items())
+                        prompt = f'議題: {agenda.strip()}\nオーナーの過去の指示:\n{feedback[:6000] or "なし"}\n他のAI社員の意見:\n{context[:10000] or "なし"}\n担当: {responsibility}\n担当者としての見解を示してください。'
+                        resp = client.responses.create(model=model, instructions=policy + f' あなたの役職は{role}。', input=prompt, max_output_tokens=1100)
+                        answer = (resp.output_text or '').strip()
+                        if not answer:
+                            raise RuntimeError(f'{role}の応答が空でした')
+                        outputs[role] = answer
+                stamp = datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')
+                title = f'AI経営会議 {stamp} / {agenda.strip()[:60]}'
+                report = '# ' + title + '\n\n## 議題\n' + agenda.strip() + '\n\n## 参照したオーナー指示\n' + (feedback or 'なし') + '\n\n' + '\n\n'.join(f'## {role}\n{value}' for role,value in outputs.items())
+                saved = requests.post(f'{api_base}/rest/v1/meetings', headers=headers, json={'title':title,'content':report,'status':'completed'}, timeout=20)
+                saved.raise_for_status()
+                data = saved.json()
+                meeting_id = data[0]['id']
+                finished = requests.patch(f'{api_base}/rest/v1/meeting_runs', params={'id':f'eq.{run_id}'}, headers=headers, json={'status':'completed','meeting_id':meeting_id,'finished_at':datetime.now().astimezone().isoformat()}, timeout=20)
+                finished.raise_for_status()
+                st.success('経営会議が完了し、議事録を保存しました。')
+                st.markdown(report)
+            except Exception as exc:
+                try:
+                    requests.patch(f'{api_base}/rest/v1/meeting_runs', params={'id':f'eq.{run_id}'}, headers=headers, json={'status':'failed','error_message':str(exc)[:500], 'finished_at':datetime.now().astimezone().isoformat()}, timeout=15)
+                except Exception:
+                    pass
+                st.error(f'会議処理に失敗しました。API呼び出し分の料金が発生している可能性があります: {exc}')
+    st.subheader('最近の会議実行')
+    try:
+        runs = fetch('meeting_runs', 'id,agenda,status,meeting_id,error_message,created_at,finished_at', 15)
+        st.dataframe([{'日時':r.get('created_at'),'議題':r.get('agenda'),'状態':r.get('status'),'議事録ID':r.get('meeting_id') or '', 'エラー':r.get('error_message') or ''} for r in runs], hide_index=True, use_container_width=True)
+    except Exception as exc:
+        st.error(f'会議実行履歴を取得できません: {exc}')
